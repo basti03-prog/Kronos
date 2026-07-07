@@ -28,6 +28,13 @@ from . import fundamental_analysis as fa
 PAGE_SIZE = (12, 14.5)
 
 
+def _strip_unrenderable(text: str) -> str:
+    """Drops characters outside the Basic Multilingual Plane (emoji, etc.) that the PDF's
+    base font (DejaVu Sans) can't render, so external text (news headlines, business
+    summaries) never produces missing-glyph boxes."""
+    return "".join(ch for ch in text if ord(ch) <= 0xFFFF)
+
+
 def _new_page(title, subtitle):
     fig = plt.figure(figsize=PAGE_SIZE, facecolor=pal.SURFACE)
     fig.text(0.06, 0.975, title, fontsize=18, fontweight="bold", color=pal.INK, ha="left", va="top")
@@ -487,7 +494,8 @@ def build_page4_risk_news_quality(ctx):
     for item in news["items"][:6]:
         color = pal.VERDICT_COLOR.get(item["sentiment_label"], pal.MUTED)
         date_str = f"{item['published']:%Y-%m-%d}" if item.get("published") else ""
-        title = textwrap.shorten(item["title"], width=100, placeholder="...").replace("$", r"\$")
+        title = _strip_unrenderable(
+            textwrap.shorten(item["title"], width=100, placeholder="...").replace("$", r"\$"))
         ax_news.text(0.0, y, "●", transform=ax_news.transAxes, fontsize=9, color=color, va="top")
         ax_news.text(0.02, y, f"{title}", transform=ax_news.transAxes, fontsize=8.6,
                      color=pal.INK_SECONDARY, va="top")
@@ -501,7 +509,8 @@ def build_page4_risk_news_quality(ctx):
     ax_qual = fig.add_subplot(gs[2, :])
     ax_qual.axis("off")
     biz_lines = textwrap.wrap(
-        (qual.get("business_summary") or "n/a").replace("$", r"\$"), width=148)[:3]
+        _strip_unrenderable((qual.get("business_summary") or "n/a").replace("$", r"\$")),
+        width=148)[:3]
     ax_qual.text(0.0, 1.0, "Company quality", transform=ax_qual.transAxes, fontsize=10.5,
                  fontweight="bold", color=pal.INK, va="top")
     y_biz = 0.94
