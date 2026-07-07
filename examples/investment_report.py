@@ -331,11 +331,15 @@ def build_report_figure(ticker, df, lookback, y_timestamp, close_paths, ema50_s,
 
     ax_summary.text(0.0, 1.0, "Key metrics", transform=ax_summary.transAxes, fontsize=11,
                      fontweight="bold", color=C_INK, va="top")
+    # Escape literal "$" -- matplotlib treats unescaped "$...$" pairs as mathtext, which
+    # silently drops the currency symbols and mangles spacing when a block has 2+ of them.
+    left_col = left_col.replace("$", r"\$")
     ax_summary.text(0.0, 0.90, left_col, transform=ax_summary.transAxes, fontsize=9.3,
                      color=C_INK_SECONDARY, va="top", family="monospace", linespacing=1.6)
 
     ax_summary.text(0.52, 1.0, "Trend analysis", transform=ax_summary.transAxes, fontsize=11,
                      fontweight="bold", color=C_INK, va="top")
+    trend_text = trend_text.replace("$", r"\$")
     ax_summary.text(0.52, 0.90, trend_text, transform=ax_summary.transAxes, fontsize=9.3,
                      color=C_INK_SECONDARY, va="top", wrap=True)
 
