@@ -1,0 +1,4 @@
+# Extra dependencies for the custom data pipeline (pipeline/).
+# Kept separate from the official requirements.txt so the upstream
+# Kronos setup instructions remain untouched.
+yfinance>=0.2.40
