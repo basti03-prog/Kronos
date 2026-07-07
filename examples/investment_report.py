@@ -42,6 +42,7 @@ sys.path.append("../")
 from model import Kronos, KronosTokenizer, KronosPredictor
 from prediction_yahoo_finance import fetch_yahoo_data, INTERVAL_TO_FREQ
 import report_analysis as ta
+import fundamentals as fnd
 
 SAVE_DIR = "./outputs"
 os.makedirs(SAVE_DIR, exist_ok=True)
@@ -80,10 +81,89 @@ def run_ensemble_forecast(predictor, x_df, x_timestamp, y_timestamp, pred_len, T
     return np.array(close_paths)  # shape (ensemble_size, pred_len)
 
 
+def draw_fundamentals(ax_chart, ax_text, fund: dict):
+    """Renders the multi-year revenue/net-income bar chart and the fundamentals key-value list."""
+    ax_chart.set_facecolor(C_SURFACE)
+    ax_text.axis("off")
+
+    if fund.get("error") or not fund.get("yearly_history"):
+        ax_chart.axis("off")
+        ax_chart.text(0.5, 0.5, "No multi-year financials available", ha="center", va="center",
+                       fontsize=9, color=C_MUTED, transform=ax_chart.transAxes)
+    else:
+        years = [row["year"] for row in fund["yearly_history"]]
+        revenue = [row["revenue"] for row in fund["yearly_history"]]
+        net_income = [row["net_income"] for row in fund["yearly_history"]]
+        x = np.arange(len(years))
+        width = 0.36
+        bars_rev = ax_chart.bar(x - width / 2, revenue, width, color=C_BLUE, label="Revenue")
+        bars_ni = ax_chart.bar(x + width / 2, net_income, width, color=C_VIOLET, label="Net income")
+        for bars in (bars_rev, bars_ni):
+            for b in bars:
+                h = b.get_height()
+                ax_chart.text(b.get_x() + b.get_width() / 2, h, fnd.fmt_money(h), rotation=90,
+                               ha="center", va="bottom" if h >= 0 else "top", fontsize=6.8,
+                               color=C_INK_SECONDARY)
+        ax_chart.set_xticks(x)
+        ax_chart.set_xticklabels(years, fontsize=8.5, color=C_MUTED)
+        ax_chart.set_title("Revenue vs. net income (fiscal year)", fontsize=9.5, color=C_INK,
+                            loc="left")
+        ax_chart.axhline(0, color=C_BASELINE, linewidth=0.8)
+        ax_chart.legend(loc="upper left", fontsize=7.5, frameon=False)
+        ax_chart.grid(True, axis="y", color=C_GRID, linewidth=0.8)
+        for spine in ["top", "right"]:
+            ax_chart.spines[spine].set_visible(False)
+        for spine in ["left", "bottom"]:
+            ax_chart.spines[spine].set_color(C_BASELINE)
+        ax_chart.tick_params(colors=C_MUTED, labelsize=8)
+        ax_chart.set_yticklabels([])
+
+    ax_text.text(0.0, 1.0, "Fundamentals", transform=ax_text.transAxes, fontsize=11,
+                 fontweight="bold", color=C_INK, va="top")
+
+    if fund.get("error"):
+        ax_text.text(0.0, 0.88, fund["error"], transform=ax_text.transAxes, fontsize=9,
+                     color=C_MUTED, va="top")
+        return
+
+    cur = fund.get("currency") or ""
+    col1 = (
+        f"Market cap:             {fnd.fmt_money(fund['market_cap'], cur)}\n"
+        f"KGV / P/E (trailing):    {fnd.fmt_ratio(fund['trailing_pe'])}\n"
+        f"KGV / P/E (forward):     {fnd.fmt_ratio(fund['forward_pe'])}\n"
+        f"PEG ratio:               {fnd.fmt_ratio(fund['peg_ratio'])}\n"
+        f"Price / Book:            {fnd.fmt_ratio(fund['price_to_book'])}\n"
+        f"EV / EBITDA:             {fnd.fmt_ratio(fund['ev_to_ebitda'])}\n"
+        f"Revenue growth (YoY):    {fnd.fmt_pct(fund['revenue_growth_yoy'])}\n"
+        f"Earnings growth (YoY):   {fnd.fmt_pct(fund['earnings_growth_yoy'])}\n"
+        f"Analyst target price:    "
+        f"{'$%.2f' % fund['target_mean_price'] if fund['target_mean_price'] is not None else 'n/a'}\n"
+        f"Analyst recommendation:  {fund['recommendation'] or 'n/a'}\n"
+    )
+    col2 = (
+        f"Free cash flow:      {fnd.fmt_money(fund['free_cash_flow'], cur)}\n"
+        f"Operating cash flow: {fnd.fmt_money(fund['operating_cash_flow'], cur)}\n"
+        f"Total debt:          {fnd.fmt_money(fund['total_debt'], cur)}\n"
+        f"Total cash:          {fnd.fmt_money(fund['total_cash'], cur)}\n"
+        f"Net debt:            {fnd.fmt_money(fund['net_debt'], cur)}\n"
+        f"Debt / Equity:       {fnd.fmt_ratio(fund['debt_to_equity'])}\n"
+        f"Current / Quick ratio: {fnd.fmt_ratio(fund['current_ratio'])} / "
+        f"{fnd.fmt_ratio(fund['quick_ratio'])}\n"
+        f"Margins (Gross/Op/Net): {fnd.fmt_pct0(fund['gross_margin'])}/"
+        f"{fnd.fmt_pct0(fund['operating_margin'])}/{fnd.fmt_pct0(fund['profit_margin'])}\n"
+        f"ROE / ROA:           {fnd.fmt_pct(fund['return_on_equity'])} / "
+        f"{fnd.fmt_pct(fund['return_on_assets'])}\n"
+    )
+    ax_text.text(0.0, 0.88, col1, transform=ax_text.transAxes, fontsize=8.2,
+                 color=C_INK_SECONDARY, va="top", family="monospace", linespacing=1.65)
+    ax_text.text(0.48, 0.88, col2, transform=ax_text.transAxes, fontsize=8.2,
+                 color=C_INK_SECONDARY, va="top", family="monospace", linespacing=1.65)
+
+
 def build_report_figure(ticker, df, lookback, y_timestamp, close_paths, ema50_s, ema200_s,
                          rsi_s, macd_s, signal_s, hist_s, support, resistance, hist_vol,
                          fcst_vol_pct, bullish_prob, verdict, components, weights, interval,
-                         pred_len):
+                         pred_len, fund):
     hist = df.iloc[-lookback:].reset_index(drop=True)
     last_close = float(hist["close"].iloc[-1])
     last_date = hist["date"].iloc[-1]
@@ -93,9 +173,9 @@ def build_report_figure(ticker, df, lookback, y_timestamp, close_paths, ema50_s,
     final_mean = mean_fc[-1]
     final_p5, final_p95 = p5[-1], p95[-1]
 
-    fig = plt.figure(figsize=(12, 16), facecolor=C_SURFACE)
-    gs = GridSpec(6, 1, height_ratios=[0.45, 3.4, 0.8, 0.8, 0.8, 2.1], hspace=0.55,
-                  left=0.09, right=0.96, top=0.94, bottom=0.04)
+    fig = plt.figure(figsize=(12, 19.5), facecolor=C_SURFACE)
+    gs = GridSpec(7, 1, height_ratios=[0.4, 3.0, 0.7, 0.7, 0.7, 1.9, 2.0], hspace=0.6,
+                  left=0.09, right=0.96, top=0.955, bottom=0.03)
 
     fig.suptitle(f"{ticker} — Kronos AI Investment Report", fontsize=20, fontweight="bold",
                  color=C_INK, x=0.09, ha="left", y=0.975)
@@ -214,8 +294,14 @@ def build_report_figure(ticker, df, lookback, y_timestamp, close_paths, ema50_s,
     for ax in (ax_price, ax_vol, ax_rsi):
         plt.setp(ax.get_xticklabels(), visible=False)
 
+    # --- Fundamentals panel ---
+    gs_fund = gs[5].subgridspec(1, 2, width_ratios=[0.85, 1.5], wspace=0.25)
+    ax_fund_chart = fig.add_subplot(gs_fund[0])
+    ax_fund_text = fig.add_subplot(gs_fund[1])
+    draw_fundamentals(ax_fund_chart, ax_fund_text, fund)
+
     # --- Summary panel ---
-    ax_summary = fig.add_subplot(gs[5])
+    ax_summary = fig.add_subplot(gs[6])
     ax_summary.axis("off")
 
     horizon_label = f"{pred_len} {interval} bars"
@@ -270,7 +356,7 @@ def build_report_figure(ticker, df, lookback, y_timestamp, close_paths, ema50_s,
 
 
 def generate_report(ticker, lookback, pred_len, range_, interval, tokenizer_name, model_name,
-                     device, T, top_p, ensemble_size, sr_window, sr_tolerance):
+                     device, T, top_p, ensemble_size, sr_window, sr_tolerance, skip_fundamentals):
     print(f"Loading Kronos tokenizer:{tokenizer_name} model:{model_name} ...")
     tokenizer = KronosTokenizer.from_pretrained(tokenizer_name)
     model = Kronos.from_pretrained(model_name)
@@ -280,6 +366,14 @@ def generate_report(ticker, lookback, pred_len, range_, interval, tokenizer_name
     if len(df) < lookback:
         raise ValueError(f"Not enough history: got {len(df)} rows, need at least {lookback}. "
                           f"Try a larger --range.")
+
+    if skip_fundamentals:
+        fund = {"error": "Fundamentals skipped (--skip_fundamentals)"}
+    else:
+        print("Fetching fundamentals ...")
+        fund = fnd.fetch_fundamentals(ticker)
+        if fund.get("error"):
+            print(f"  warning: {fund['error']}")
 
     x_df = df.iloc[-lookback:][["open", "high", "low", "close", "volume", "amount"]]
     x_timestamp = df.iloc[-lookback:]["date"].reset_index(drop=True)
@@ -323,7 +417,7 @@ def generate_report(ticker, lookback, pred_len, range_, interval, tokenizer_name
     fig = build_report_figure(
         ticker, df, lookback, y_timestamp, close_paths, ema50_s, ema200_s, rsi_s, macd_s,
         signal_s, hist_s, support, resistance, hist_vol, fcst_vol_pct, bullish_prob, verdict,
-        components, weights, interval, pred_len)
+        components, weights, interval, pred_len, fund)
 
     png_path = os.path.join(SAVE_DIR, f"report_{ticker.replace('.', '_')}.png")
     pdf_path = os.path.join(SAVE_DIR, f"report_{ticker.replace('.', '_')}.pdf")
@@ -353,6 +447,8 @@ if __name__ == "__main__":
     parser.add_argument("--sr_window", type=int, default=5, help="Swing pivot half-window for support/resistance")
     parser.add_argument("--sr_tolerance", type=float, default=0.015,
                          help="Relative price tolerance used to cluster support/resistance levels")
+    parser.add_argument("--skip_fundamentals", action="store_true",
+                         help="Skip the Yahoo Finance fundamentals lookup (KGV, growth, FCF, debt, ...)")
     args = parser.parse_args()
 
     generate_report(
@@ -360,4 +456,5 @@ if __name__ == "__main__":
         interval=args.interval, tokenizer_name=args.tokenizer, model_name=args.model,
         device=args.device, T=args.T, top_p=args.top_p, ensemble_size=args.ensemble_size,
         sr_window=args.sr_window, sr_tolerance=args.sr_tolerance,
+        skip_fundamentals=args.skip_fundamentals,
     )
