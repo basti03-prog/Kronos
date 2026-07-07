@@ -22,11 +22,21 @@ CRITICAL = "#d03b3b"
 WARNING = "#fab219"
 
 VERDICT_COLOR = {
-    "BUY": GOOD, "BULLISH": GOOD,
+    "STRONG BUY": GOOD, "BUY": GOOD, "BULLISH": GOOD,
+    "REDUCE": ORANGE,
     "SELL": CRITICAL, "BEARISH": CRITICAL,
     "HOLD": WARNING, "NEUTRAL / MIXED": WARNING,
     "positive": GOOD, "negative": CRITICAL, "neutral": WARNING,
 }
+
+# 5-tier rating -> gauge zone color, in score order (low to high).
+RATING_ZONES = [
+    (0, 30, "SELL", CRITICAL),
+    (30, 45, "REDUCE", ORANGE),
+    (45, 65, "HOLD", WARNING),
+    (65, 80, "BUY", GOOD),
+    (80, 100, "STRONG BUY", "#086e08"),  # darker green step for the top zone
+]
 
 
 def style_axes(ax):

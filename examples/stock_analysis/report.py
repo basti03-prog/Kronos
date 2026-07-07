@@ -8,6 +8,7 @@ Every plotting function takes the fully-computed `ctx` dict built by
 stock_report.py — this module only visualizes, it does not compute anything.
 """
 
+import math
 import textwrap
 import numpy as np
 import pandas as pd
@@ -16,7 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.gridspec import GridSpec
-from matplotlib.patches import FancyBboxPatch
+from matplotlib.patches import FancyBboxPatch, Wedge, Circle
 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -38,7 +39,8 @@ def _verdict_banner(fig, rect, label, right_text):
     ax = fig.add_axes(rect)
     ax.axis("off")
     color = pal.VERDICT_COLOR.get(label, pal.MUTED)
-    arrow = {"BUY": "▲", "BULLISH": "▲", "SELL": "▼", "BEARISH": "▼"}.get(label, "▬")
+    arrow = {"STRONG BUY": "▲▲", "BUY": "▲", "BULLISH": "▲", "REDUCE": "▽",
+             "SELL": "▼", "BEARISH": "▼"}.get(label, "▬")
     ax.add_patch(FancyBboxPatch((0, 0), 1, 1, transform=ax.transAxes,
                                  boxstyle="round,pad=0,rounding_size=0.04",
                                  linewidth=0, facecolor=color, alpha=0.14))
@@ -68,6 +70,33 @@ def _score_barh(ax, labels, values, title):
         spine.set_visible(False)
     ax.set_xticks([])
     ax.tick_params(length=0)
+
+
+def _draw_gauge(ax, score, rating):
+    """Half-donut gauge: 5 colored rating zones (SELL..STRONG BUY) plus a needle at `score`."""
+    ax.set_xlim(-1.18, 1.18)
+    ax.set_ylim(-0.25, 1.12)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    for lo, hi, label, color in pal.RATING_ZONES:
+        theta_lo = 180.0 - (lo / 100.0 * 180.0)
+        theta_hi = 180.0 - (hi / 100.0 * 180.0)
+        ax.add_patch(Wedge((0, 0), 1.0, theta_hi, theta_lo, width=0.34, facecolor=color,
+                            edgecolor=pal.SURFACE, linewidth=2))
+        mid_angle = math.radians((theta_lo + theta_hi) / 2.0)
+        lx, ly = 1.16 * math.cos(mid_angle), 1.16 * math.sin(mid_angle)
+        ax.text(lx, ly, label, fontsize=6.6, color=pal.MUTED, ha="center", va="center")
+
+    needle_angle = math.radians(180.0 - (float(np.clip(score, 0, 100)) / 100.0 * 180.0))
+    nx, ny = 0.82 * math.cos(needle_angle), 0.82 * math.sin(needle_angle)
+    ax.plot([0, nx], [0, ny], color=pal.INK, linewidth=2.5, solid_capstyle="round", zorder=5)
+    ax.add_patch(Circle((0, 0), 0.045, color=pal.INK, zorder=6))
+
+    color = pal.VERDICT_COLOR.get(rating, pal.MUTED)
+    ax.text(0, -0.06, f"{score:.0f}", fontsize=26, fontweight="bold", ha="center", va="top",
+            color=pal.INK)
+    ax.text(0, -0.19, rating, fontsize=12.5, fontweight="bold", ha="center", va="top", color=color)
 
 
 # --------------------------------------------------------------------------- Page 1
@@ -509,7 +538,7 @@ def build_page5_final_score(ctx):
                      f"Investment score: {ctx['investment_score']:.0f}/100"
                      if ctx["investment_score"] is not None else "n/a")
 
-    gs = GridSpec(2, 1, height_ratios=[0.65, 1.25], hspace=0.18, left=0.26, right=0.90, top=0.78,
+    gs = GridSpec(2, 1, height_ratios=[0.85, 1.15], hspace=0.22, left=0.26, right=0.90, top=0.78,
                   bottom=0.10)
     ax_score = fig.add_subplot(gs[0])
     labels = list(ctx["score_breakdown"].keys())
@@ -538,6 +567,94 @@ def build_page5_final_score(ctx):
     return fig
 
 
+# --------------------------------------------------------------------------- Page 6
+def build_page6_ai_decision(ctx):
+    fig = _new_page(f"{ctx['ticker']} — AI Investment Decision",
+                     "Buy/Hold/Sell probability · confidence · reasons to buy, caution & key risks")
+    decision = ctx["decision"]
+
+    gs = GridSpec(3, 2, height_ratios=[1.4, 1.3, 0.9], hspace=0.35, wspace=0.28, left=0.08,
+                  right=0.96, top=0.90, bottom=0.05)
+
+    ax_gauge = fig.add_subplot(gs[0, 0])
+    _draw_gauge(ax_gauge, decision["score"], decision["rating"])
+
+    gs_prob = gs[0, 1].subgridspec(2, 1, height_ratios=[1.6, 1.0], hspace=0.15)
+    ax_prob = fig.add_subplot(gs_prob[0])
+    ax_conf = fig.add_subplot(gs_prob[1])
+    ax_conf.axis("off")
+    p = decision["probabilities"]
+    labels = ["Buy", "Hold", "Sell"]
+    values = [p["buy"], p["hold"], p["sell"]]
+    colors = [pal.GOOD, pal.WARNING, pal.CRITICAL]
+    y = np.arange(len(labels))
+    bars = ax_prob.barh(y, values, color=colors, height=0.5)
+    for b, v in zip(bars, values):
+        ax_prob.text(b.get_width() + 2, b.get_y() + b.get_height() / 2, f"{v:.0f}%", va="center",
+                     fontsize=10, color=pal.INK_SECONDARY, fontweight="bold")
+    ax_prob.set_yticks(y)
+    ax_prob.set_yticklabels(labels, fontsize=10.5, color=pal.INK_SECONDARY)
+    ax_prob.set_xlim(0, 112)
+    ax_prob.invert_yaxis()
+    ax_prob.set_title("Buy / Hold / Sell probability", fontsize=10.5, color=pal.INK, loc="left",
+                       fontweight="bold")
+    for spine in ax_prob.spines.values():
+        spine.set_visible(False)
+    ax_prob.set_xticks([])
+    ax_prob.tick_params(length=0)
+
+    ax_conf.text(0.0, 0.95,
+                 f"Confidence: {decision['confidence']:.0f}%  "
+                 f"(data completeness {decision['completeness'] * 100:.0f}%, "
+                 f"signal agreement {decision['agreement'] * 100:.0f}%)",
+                 transform=ax_conf.transAxes, fontsize=9, color=pal.INK_SECONDARY, va="top")
+    ax_conf.text(0.0, 0.55,
+                 "Probabilities are derived from the Investment Score via a triangular membership "
+                 "function centered on Buy/Hold/Sell, not a separate model.",
+                 transform=ax_conf.transAxes, fontsize=7.4, color=pal.MUTED, va="top",
+                 style="italic", wrap=True)
+
+    gs_reasons = gs[1, :].subgridspec(1, 3, wspace=0.12)
+    reason_columns = [
+        ("Reasons to Buy", "reasons_to_buy", pal.GOOD, "No significant bullish factors identified."),
+        ("Reasons for Caution", "reasons_for_caution", pal.ORANGE, "No caution flags identified."),
+        ("Key Risks to Monitor", "key_risks", pal.CRITICAL, "No high-severity risks identified."),
+    ]
+    for col_idx, (title, key, color, empty_msg) in enumerate(reason_columns):
+        ax_col = fig.add_subplot(gs_reasons[col_idx])
+        ax_col.axis("off")
+        ax_col.text(0.0, 1.0, title, transform=ax_col.transAxes, fontsize=10, fontweight="bold",
+                    color=color, va="top", wrap=True)
+        y_c = 0.86
+        items = decision[key]
+        if items:
+            for f in items:
+                y_c = _render_bullets(ax_col, 0.0, y_c, [f"{f.label} — {f.detail}"], char_width=34,
+                                       fontsize=7.8, color=pal.INK_SECONDARY, line_step=0.052,
+                                       max_lines=4)
+                y_c -= 0.035
+        else:
+            ax_col.text(0.0, y_c, empty_msg, transform=ax_col.transAxes, fontsize=7.8,
+                        color=pal.MUTED, va="top", wrap=True)
+
+    ax_expl = fig.add_subplot(gs[2, :])
+    ax_expl.axis("off")
+    ax_expl.text(0.0, 1.0, "Summary", transform=ax_expl.transAxes, fontsize=11, fontweight="bold",
+                 color=pal.INK, va="top")
+    expl_lines = textwrap.wrap(decision["explanation"], width=148)
+    y_e = 0.82
+    for line in expl_lines:
+        ax_expl.text(0.0, y_e, line, transform=ax_expl.transAxes, fontsize=9.4,
+                     color=pal.INK_SECONDARY, va="top")
+        y_e -= 0.14
+    ax_expl.text(0.0, 0.05,
+                 "Disclaimer: generated by a machine-learning model (Kronos) and rule-based "
+                 "financial heuristics for research/educational purposes only. Not financial advice.",
+                 transform=ax_expl.transAxes, fontsize=7.6, color=pal.MUTED, va="top",
+                 style="italic", wrap=True)
+    return fig
+
+
 def build_pdf_and_png(ctx, pdf_path, png_path):
     pages = [
         build_page1_overview(ctx),
@@ -545,6 +662,7 @@ def build_pdf_and_png(ctx, pdf_path, png_path):
         build_page3_fundamentals_valuation(ctx),
         build_page4_risk_news_quality(ctx),
         build_page5_final_score(ctx),
+        build_page6_ai_decision(ctx),
     ]
     with PdfPages(pdf_path) as pdf:
         for fig in pages:

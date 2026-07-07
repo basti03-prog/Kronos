@@ -8,21 +8,26 @@ Cross), fundamental analysis (growth/margins/ROIC/leverage + a 0-100 Quality
 Score), valuation (DCF + Graham fair value, margin of safety), risk analysis
 (volatility/beta/max drawdown/Sharpe/Sortino), news & sentiment, a data-driven
 company-quality assessment (moat/market position/growth/risks), and a final
-weighted Investment Score with a Buy/Hold/Sell recommendation.
+AI investment decision layer: a weighted Investment Score (0-100), a 5-tier
+STRONG BUY..SELL rating, Buy/Hold/Sell probabilities, a confidence score, and
+the strongest bullish/bearish factors behind the call.
 
 All the actual logic lives in the stock_analysis/ package (one module per
 concern — data_provider, technical, fundamental_analysis, valuation, risk,
-news_sentiment, quality, prediction, scoring, report); this script only
-orchestrates the pipeline and exposes the CLI.
+news_sentiment, quality, prediction, scoring, ai_decision, report); this
+script only orchestrates the pipeline and exposes the CLI.
 
 Usage:
     python stock_report.py --ticker AAPL
     python stock_report.py --ticker SAP.DE --pred_len 40 --ensemble_size 8
 
 Output (./outputs/):
-    - report_<TICKER>.pdf              5-page professional PDF report
+    - report_<TICKER>.pdf              6-page professional PDF report
     - report_<TICKER>_overview.png     quick-look PNG of the overview page
     - report_<TICKER>_interactive.html self-contained interactive Plotly chart
+
+The AI investment decision is also printed to the terminal at the end of
+every run.
 """
 
 import os
@@ -42,6 +47,7 @@ from stock_analysis import news_sentiment as ns
 from stock_analysis import quality as qual
 from stock_analysis import prediction as pred
 from stock_analysis import scoring as sc
+from stock_analysis import ai_decision as ai
 from stock_analysis import report as rpt
 
 SAVE_DIR = "./outputs"
@@ -117,17 +123,19 @@ def run_analysis(ticker, lookback, pred_len, range_, interval, tokenizer_name, m
     close_paths = pred.run_ensemble_forecast(predictor, x_df, x_timestamp, y_timestamp, pred_len,
                                               T, top_p, ensemble_size)
     p_ensemble_up = float(np.mean(close_paths[:, -1] > last_close))
+    forecast_expected_return = float(np.mean(close_paths[:, -1])) / last_close - 1.0
 
-    momentum_score, momentum_label, momentum_components, momentum_weights = sc.technical_momentum_score(
-        p_ensemble_up, tech.ema50.iloc[-1], tech.ema200.iloc[-1], last_close, tech.hist.iloc[-1],
-        tech.rsi.iloc[-1])
+    pred_score, pred_label = sc.prediction_score(p_ensemble_up)
+    tech_score, tech_label, tech_components, tech_weights = sc.technical_score(
+        tech.ema50.iloc[-1], tech.ema200.iloc[-1], last_close, tech.hist.iloc[-1], tech.rsi.iloc[-1])
 
     investment_score, recommendation, score_breakdown, score_weights, reasons = sc.compute_investment_score(
-        quality_score, mos_dcf, momentum_score, risk_snap.sharpe, news["avg_compound"])
+        pred_score, quality_score, mos_dcf, tech_score, risk_snap.sharpe, news["avg_compound"])
 
-    print(f"Momentum: {momentum_label} ({momentum_score:.0f}/100)  |  "
-          f"Investment score: {investment_score:.0f}/100 -> {recommendation}"
-          if investment_score is not None else f"Investment score: n/a -> {recommendation}")
+    print(f"Prediction: {pred_label} ({pred_score:.0f}/100)  |  Technicals: {tech_label} "
+          f"({tech_score:.0f}/100)  |  Investment score: "
+          + (f"{investment_score:.0f}/100 -> {recommendation}" if investment_score is not None
+             else f"n/a -> {recommendation}"))
 
     ctx = {
         "ticker": ticker, "df": df, "lookback": lookback, "interval": interval,
@@ -139,11 +147,22 @@ def run_analysis(ticker, lookback, pred_len, range_, interval, tokenizer_name, m
         "margin_of_safety_graham": mos_graham, "blended_fair_value": blended_fv,
         "target_mean_price": fund.get("target_mean_price"),
         "risk": risk_snap, "news": news, "quality_assessment": quality_assessment,
-        "momentum_score": momentum_score, "momentum_label": momentum_label,
-        "momentum_components": momentum_components, "momentum_weights": momentum_weights,
-        "investment_score": investment_score, "recommendation": recommendation,
+        "p_ensemble_up": p_ensemble_up, "forecast_expected_return": forecast_expected_return,
+        "pred_score": pred_score, "pred_label": pred_label,
+        "tech_score": tech_score, "tech_label": tech_label,
+        "tech_components": tech_components, "tech_weights": tech_weights,
+        "investment_score": investment_score, "recommendation_3tier": recommendation,
         "score_breakdown": score_breakdown, "score_weights": score_weights, "reasons": reasons,
     }
+
+    print("Computing AI investment decision ...")
+    decision = ai.build_decision(ctx)
+    ctx["decision"] = decision
+    ctx["recommendation"] = decision["rating"]  # 5-tier STRONG BUY..SELL drives the report banners
+
+    print()
+    print(ai.format_terminal_summary(ticker, decision))
+    print()
 
     safe_ticker = ticker.replace(".", "_").replace("^", "")
     pdf_path = os.path.join(SAVE_DIR, f"report_{safe_ticker}.pdf")
