@@ -265,7 +265,11 @@ def build_page3_fundamentals_valuation(ctx):
         ax_rev.set_xticks(x)
         ax_rev.set_xticklabels(yrs, fontsize=8.5, color=pal.MUTED)
         ax_rev.axhline(0, color=pal.BASELINE, linewidth=0.8)
-        ax_rev.legend(loc="upper left", fontsize=7.5, frameon=False)
+        # Headroom for the rotated value labels above the tallest bars, so they don't run
+        # into the legend; legend sits below the x-axis labels instead of inside the plot.
+        ax_rev.set_ylim(top=max(revenue + net_income) * 1.22)
+        ax_rev.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, fontsize=7.5,
+                      frameon=False)
         ax_rev.set_yticklabels([])
         ax_rev.set_title("Revenue vs. net income (fiscal year)", fontsize=10, color=pal.INK,
                           loc="left", fontweight="bold")
