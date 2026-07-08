@@ -115,7 +115,8 @@ def compare(tickers, **kwargs):
     ax_comp.invert_yaxis()
     ax_comp.set_xlim(0, 112)
     ax_comp.axvline(50, color=pal.BASELINE, linewidth=1, linestyle=":")
-    ax_comp.legend(loc="lower right", fontsize=8, frameon=False, ncol=len(tickers))
+    ax_comp.legend(loc="lower right", bbox_to_anchor=(1.0, 1.01), fontsize=8, frameon=False,
+                    ncol=len(tickers))
     ax_comp.set_title("Score components", fontsize=11.5, fontweight="bold", color=pal.INK, loc="left")
     pal.style_axes(ax_comp)
     ax_comp.spines["left"].set_visible(False)
